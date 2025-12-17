@@ -1,0 +1,919 @@
+@page "/documents"
+@rendermode InteractiveServer
+
+@using GeneratingDocs
+@using System.Globalization
+@inject HttpClient Http
+@inject FileUtil FileUtil
+
+<style>
+    .table-header { background-color: #f6f8fb; font-weight: 700; }
+    .search-box { border-radius: 6px; padding: 8px 12px; border: 1px solid #e2e8f0; width: 320px; }
+    .btn-primary-custom { background-color: #2563eb; border: none; padding: 8px 14px; border-radius: 6px; color: white; }
+    .modal-backdrop-custom { background-color: rgba(0,0,0,0.45); position: fixed; inset: 0; z-index: 9999; }
+    .modal-card { background: white; width: 820px; margin: 4% auto; padding: 22px; border-radius: 10px; z-index: 10000; box-shadow: 0 12px 40px rgba(0,0,0,0.15); }
+    /* component-level dropdown; set display so Bootstrap's global .dropdown-menu {display:none} doesn't hide it */
+    .dropdown-menu { position: absolute; display: block; background: white; border-radius: 6px; border: 1px solid #ddd; min-width: 170px; z-index: 99999; padding: 6px 0; right: 0; top: 34px; }
+    .dropdown-item { padding: 8px 12px; cursor:pointer; }
+    .dropdown-item:hover { background: #f3f4f6; }
+    .position-relative { position: relative; }
+    .small-muted { font-size: 0.9rem; color:#6b7280; }
+</style>
+
+<h2 class="mb-3">📄 Document Generator — HR Dashboard</h2>
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <input class="search-box" placeholder="Search employee..." @bind="SearchText" @oninput="OnSearchInput" />
+    <div>
+        <button class="btn btn-outline-secondary me-2" @onclick="RefreshEmployees">Refresh</button>
+        <button class="btn-primary-custom" @onclick="ShowAddModal">+ Add Employee</button>
+    </div>
+</div>
+
+<!-- EMPLOYEE TABLE -->
+<table class="table table-hover">
+    <thead class="table-header">
+        <tr>
+            <th style="width:140px">Employee No</th>
+            <th>Name</th>
+            <th>Designation</th>
+            <th>Department</th>
+            <th>Location</th>
+            <th style="width:220px">Actions</th>
+        </tr>
+    </thead>
+
+    <tbody>
+        @if (!PagedEmployees.Any())
+        {
+            <tr><td colspan="6" class="text-center text-muted">No employees found</td></tr>
+        }
+        else
+        {
+            @foreach (var e in PagedEmployees)
+            {
+                <tr>
+                    <td>@e.EmployeeNo</td>
+                    <td>@e.Name</td>
+                    <td>@e.Designation</td>
+                    <td>@e.Department</td>
+                    <td>@e.Location</td>
+                    <td class="position-relative">
+                        <div class="d-flex gap-2">
+                            <button class="btn btn-sm btn-info" @onclick="() => OpenEditModal(e)">Edit</button>
+
+                            <div class="position-relative">
+                                <button class="btn btn-sm btn-secondary"
+                                        @onclick:stopPropagation
+                                        @onclick="() => ToggleDropdown(e.Id)">
+                                    Generate ▾
+                                </button>
+
+                                @if (OpenDropdown == e.Id)
+                                {
+                                    <div class="dropdown-menu" @onclick:stopPropagation>
+                                        <div class="dropdown-item" @onclick="() => OpenOfferFor(e.Id)">Offer Letter</div>
+                                        <div class="dropdown-item" @onclick="() => OpenPayslipFor(e.Id)">Payslip</div>
+                                        <div class="dropdown-item" @onclick="() => OpenExperienceFor(e.Id)">Experience Letter</div>
+                                        <div class="dropdown-item" @onclick="() => OpenRelievingFor(e.Id)">Relieving Letter</div>
+                                    </div>
+                                }
+                            </div>
+
+                            <button class="btn btn-sm btn-light" @onclick="() => DeleteEmployee(e.Id)">Delete</button>
+                        </div>
+                    </td>
+                </tr>
+            }
+        }
+    </tbody>
+</table>
+
+<!-- Pagination -->
+<div class="d-flex justify-content-between align-items-center">
+    <small>Showing @((_pageIndex * PageSize) + 1) - @(Math.Min((_pageIndex + 1) * PageSize, FilteredEmployees.Count())) of @FilteredEmployees.Count()</small>
+    <div>
+        <button class="btn btn-light me-2" @onclick="PrevPage" disabled="@(_pageIndex==0)">Previous</button>
+        <button class="btn btn-light" @onclick="NextPage" disabled="@(!_hasMore)">Next</button>
+    </div>
+</div>
+
+<!-- ADD EMPLOYEE MODAL -->
+@if (ShowAddModalFlag)
+{
+    <div class="modal-backdrop-custom" @onclick="CloseAddModal">
+        <div class="modal-card" @onclick:stopPropagation>
+            <h4>Add Employee</h4>
+            <div class="row g-2 mt-2">
+                <div class="col-md-6">
+                    <label>Name</label>
+                    <input class="form-control" @bind="AddModel.Name" />
+                </div>
+                <div class="col-md-6">
+                    <label>Employee No</label>
+                    <input class="form-control" @bind="AddModel.EmployeeNo" />
+                </div>
+
+                <div class="col-md-6 mt-2">
+                    <label>Designation</label>
+                    <input class="form-control" @bind="AddModel.Designation" />
+                </div>
+                <div class="col-md-6 mt-2">
+                    <label>Department</label>
+                    <input class="form-control" @bind="AddModel.Department" />
+                </div>
+
+                <div class="col-md-6 mt-2">
+                    <label>Location</label>
+                    <input class="form-control" @bind="AddModel.Location" />
+                </div>
+                <div class="col-md-6 mt-2">
+                    <label>PAN</label>
+                    <input class="form-control" @bind="AddModel.PAN" />
+                </div>
+                <div class="col-md-6 mt-2">
+                    <label>UAN</label>
+                    <input class="form-control" @bind="AddModel.UAN" />
+                </div>
+
+                <div class="col-md-6 mt-2">
+                    <label>Joining Date</label>
+                    <input type="date" class="form-control" @bind="AddModel.JoiningDate" />
+                </div>
+
+                <div class="col-md-6 mt-2">
+                    <label>Annual CTC</label>
+                    <input type="number" class="form-control" @bind="AddAnnualCTC" @bind:event="oninput" />
+                </div>
+
+                <div class="col-md-6 mt-2">
+                    <label>Monthly CTC (Auto)</label>
+                    <input type="number" class="form-control" value="@AddMonthlyCTC" disabled />
+                </div>
+            </div>
+
+            <div class="d-flex justify-content-end gap-2 mt-3">
+                <button class="btn btn-outline-secondary" @onclick="CloseAddModal">Cancel</button>
+                <button class="btn btn-primary" @onclick="SaveAddEmployee">Save</button>
+            </div>
+        </div>
+    </div>
+}
+
+<!-- EDIT EMPLOYEE MODAL -->
+@if (ShowEditModalFlag)
+{
+    <div class="modal-backdrop-custom" @onclick="CloseEditModal">
+        <div class="modal-card" @onclick:stopPropagation>
+            <h4>Edit Employee</h4>
+            <div class="row g-2 mt-2">
+                <div class="col-md-6">
+                    <label>Name</label>
+                    <input class="form-control" @bind="EditModel.Name" />
+                </div>
+                <div class="col-md-6">
+                    <label>Employee No</label>
+                    <input class="form-control" @bind="EditModel.EmployeeNo" />
+                </div>
+
+                <div class="col-md-6 mt-2">
+                    <label>Designation</label>
+                    <input class="form-control" @bind="EditModel.Designation" />
+                </div>
+                <div class="col-md-6 mt-2">
+                    <label>Department</label>
+                    <input class="form-control" @bind="EditModel.Department" />
+                </div>
+
+                <div class="col-md-6 mt-2">
+                    <label>Location</label>
+                    <input class="form-control" @bind="EditModel.Location" />
+                </div>
+                <div class="col-md-6 mt-2">
+                    <label>PAN</label>
+                    <input class="form-control" @bind="EditModel.PAN" />
+                </div>
+                <div class="col-md-6 mt-2">
+                    <label>UAN</label>
+                    <input class="form-control" @bind="EditModel.UAN" />
+                </div>
+
+                <div class="col-md-6 mt-2">
+                    <label>Joining Date</label>
+                    <input type="date" class="form-control" @bind="EditModel.JoiningDate" />
+                </div>
+
+                <div class="col-md-6 mt-2">
+                    <label>Annual CTC</label>
+                    <input type="number" class="form-control" @bind="EditAnnualCTC" @bind:event="oninput" />
+                </div>
+
+                <div class="col-md-6 mt-2">
+                    <label>Monthly CTC (Auto)</label>
+                    <input type="number" class="form-control" value="@EditMonthlyCTC" disabled />
+                </div>
+            </div>
+
+            <div class="d-flex justify-content-end gap-2 mt-3">
+                <button class="btn btn-outline-secondary" @onclick="CloseEditModal">Cancel</button>
+                <button class="btn btn-primary" @onclick="SaveEditEmployee">Save</button>
+            </div>
+        </div>
+    </div>
+}
+
+<!-- DOCUMENT GENERATION PANEL -->
+@if (ShowDocumentPanel)
+{
+    <div class="modal-backdrop-custom" @onclick="CloseDocumentPanel">
+        <div class="modal-card" style="width:920px" @onclick:stopPropagation>
+            <h4>@PanelTitle</h4>
+            <p class="small-muted"><b>Employee:</b> @SelectedEmployee?.Name (@SelectedEmployee?.EmployeeNo)</p>
+
+            <div class="mt-2">
+                @if (SelectedDoc == "offer")
+                {
+                    <div class="row g-2">
+                        <div class="col-md-4">
+                            <label>Select Logo</label>
+                            <select class="form-control" @bind="SelectedLogo">
+                                <option disabled selected value="">Click to Select Logo ▼</option>
+
+                                @foreach (var l in Logos)
+                                {
+                                    <option value="@l">@l</option>
+                                }
+                            </select>
+
+                        </div>
+                        <div class="col-md-4">
+                            <label>Select Signature / Stamp</label>
+                            <select class="form-control" @bind="SelectedSignature">
+                                <option value="">Click to Select Signature</option>
+                                @foreach (var s in Signatures)
+                                {
+                                    <option value="@s">@s</option>
+                                }
+                            </select>
+                        </div>
+
+                        <div class="col-md-4">
+                            <label>Offer Date</label>
+                            <input type="date" class="form-control" @bind="OfferDate" />
+                        </div>
+
+                        <div class="col-md-4">
+                            <label>Start Date</label>
+                            <input type="date" class="form-control" @bind="StartDate" />
+                        </div>
+                    </div>
+
+                    <h6 class="mt-3">Annexure-I (Editable)</h6>
+
+                    <div class="row g-2">
+                        <div class="col-md-3">
+                            <label>Basic</label>
+                            <input class="form-control" @bind="OverrideBasic" @bind:event="oninput" />
+                        </div>
+
+                        <div class="col-md-3">
+                            <label>HRA</label>
+                            <input class="form-control" @bind="OverrideHRA" @bind:event="oninput" />
+                        </div>
+
+                        <div class="col-md-3">
+                            <label>Conveyance</label>
+                            <input class="form-control" @bind="OverrideConveyance" @bind:event="oninput" />
+                        </div>
+
+                        <div class="col-md-3">
+                            <label>Special Allowance</label>
+                            <input class="form-control" @bind="OverrideSpecial" @bind:event="oninput" />
+                        </div>
+                    </div>
+
+                    <div class="row g-2 mt-2">
+                        <div class="col-md-3">
+                            <label>PT</label>
+                            <input class="form-control" @bind="OverridePT" @bind:event="oninput" />
+                        </div>
+
+                        <div class="col-md-9 d-flex align-items-center">
+                            <div>
+                                <b>Net Take Home:</b> @CalculatedNetMonthly.ToString("N2")<br />
+                                <b>Yearly:</b> @CalculatedNetYearly.ToString("N2")
+                            </div>
+                        </div>
+                    </div>
+                }
+
+                @if (SelectedDoc == "payslip")
+                {
+                    <div class="row g-2">
+                        <div class="col-md-4">
+                            <label>Select Logo</label>
+                            <select class="form-control" @bind="SelectedLogo">
+                                <option disabled selected value="">Click to Select Logo ▼</option>
+
+                                @foreach (var l in Logos)
+                                {
+                                    <option value="@l">@l</option>
+                                }
+                            </select>
+
+                        </div>
+                        <div class="col-md-4">
+                            <label>Month</label>
+                            <input type="month" class="form-control" @bind="PayslipMonth" />
+                        </div>
+
+                        <div class="col-md-4">
+                            <label>Effective Days</label>
+                            <input class="form-control"
+                                @bind-value="EffectiveDays"
+                                @bind-value:event="oninput"
+                                @bind-value:after="Recalculate" />
+                        </div>
+
+                        <div class="col-md-4">
+                            <label>LOP</label>
+                            <input class="form-control"
+                                @bind-value="LOP"
+                                @bind-value:event="oninput"
+                                @bind-value:after="Recalculate" />
+                        </div>
+                    </div>
+
+                    <h6 class="mt-3">Deductions (Editable)</h6>
+
+                    <div class="row g-2">
+                        <div class="col-md-3">
+                            <label>PF</label>
+                            <input class="form-control"
+                                @bind-value="OverridePF"
+                                @bind-value:event="oninput"
+                                @bind-value:after="Recalculate" />
+                        </div>
+
+                        <div class="col-md-3">
+                            <label>PT</label>
+                            <input class="form-control"
+                                @bind-value="OverridePT"
+                                @bind-value:event="oninput"
+                                @bind-value:after="Recalculate" />
+                        </div>
+
+                        <div class="col-md-3">
+                            <label>PF Admin</label>
+                            <input class="form-control"
+                                @bind-value="OverridePFAdmin"
+                                @bind-value:event="oninput"
+                                @bind-value:after="Recalculate" />
+                        </div>
+
+                        <div class="col-md-3">
+                            <label>Mobile</label>
+                            <input class="form-control"
+                                @bind-value="OverrideMobile"
+                                @bind-value:event="oninput"
+                                @bind-value:after="Recalculate" />
+                        </div>
+                    </div>
+
+                    <div class="row g-2 mt-2">
+                        <div class="col-md-3">
+                            <label>Health Insurance</label>
+                            <input class="form-control"
+                                @bind-value="OverrideHealth"
+                                @bind-value:event="oninput"
+                                @bind-value:after="Recalculate" />
+                        </div>
+
+                        <div class="col-md-3">
+                            <label>Travel Allowance</label>
+                            <input class="form-control"
+                                @bind-value="OverrideTravel"
+                                @bind-value:event="oninput"
+                                @bind-value:after="Recalculate" />
+                        </div>
+                    </div>
+
+                    <div class="mt-3">
+                        <b>Total Earnings:</b> @CalculatedMonthlyCTC.ToString("N2")<br />
+                        <b>Total Deductions:</b> @CalculatedTotalDeductions.ToString("N2")<br />
+                        <b>Net Pay:</b> @CalculatedNetMonthly.ToString("N2")
+                    </div>
+                }
+
+
+                @if (SelectedDoc == "experience")
+                {
+                    <div class="row g-2">
+                        <div class="col-md-4">
+                            <label>From</label>
+                            <input type="date" class="form-control" @bind="FromDate" />
+                        </div>
+
+                        <div class="col-md-4">
+                            <label>To</label>
+                            <input type="date" class="form-control" @bind="ToDate" />
+                        </div>
+
+                        <div class="col-md-4">
+                            <label>Issued On</label>
+                            <input type="date" class="form-control" @bind="IssueDate" />
+                        </div>
+                    </div>
+                }
+
+                @if (SelectedDoc == "relieving")
+                {
+                    <div class="row g-2">
+                        <div class="col-md-6">
+                            <label>Relieving Date</label>
+                            <input type="date" class="form-control" @bind="ToDate" />
+                        </div>
+
+                        <div class="col-md-6">
+                            <label>Issued On</label>
+                            <input type="date" class="form-control" @bind="IssueDate" />
+                        </div>
+                    </div>
+                }
+
+                <div class="d-flex justify-content-end gap-2 mt-4">
+                    <button class="btn btn-outline-secondary" @onclick="CloseDocumentPanel">Cancel</button>
+                    <button class="btn btn-outline-primary" @onclick="PreviewDocument">Preview</button>
+                    <button class="btn btn-primary" @onclick="DownloadDocument">Download</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    // --- Data ---
+    List<Employee> AllEmployees = new();
+    string SearchText = "";
+    int _pageIndex = 0;
+    const int PageSize = 10;
+
+    IEnumerable<Employee> FilteredEmployees =>
+        string.IsNullOrWhiteSpace(SearchText)
+            ? AllEmployees
+            : AllEmployees.Where(e =>
+                (!string.IsNullOrWhiteSpace(e.Name) && e.Name.Contains(SearchText, StringComparison.OrdinalIgnoreCase)) ||
+                (!string.IsNullOrWhiteSpace(e.EmployeeNo) && e.EmployeeNo.Contains(SearchText, StringComparison.OrdinalIgnoreCase)));
+
+    IEnumerable<Employee> PagedEmployees => FilteredEmployees.Skip(_pageIndex * PageSize).Take(PageSize);
+    bool _hasMore => FilteredEmployees.Skip((_pageIndex + 1) * PageSize).Any();
+
+    // Lifecycle
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadEmployees();
+    }
+
+    async Task LoadEmployees()
+    {
+        try
+        {
+            var res = await Http.GetAsync("api/documents/employees");
+            if (!res.IsSuccessStatusCode)
+            {
+                Console.WriteLine($"LoadEmployees failed: {res.StatusCode}");
+                return;
+            }
+            AllEmployees = await res.Content.ReadFromJsonAsync<List<Employee>>() ?? new();
+            _pageIndex = 0;
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("LoadEmployees ERROR: " + ex.Message);
+        }
+    }
+
+    void OnSearchInput(ChangeEventArgs e) => _pageIndex = 0;
+    void PrevPage() { if (_pageIndex > 0) _pageIndex--; }
+    void NextPage() { if (_hasMore) _pageIndex++; }
+
+    // Dropdown
+    Guid? OpenDropdown = null;
+    void ToggleDropdown(Guid id) => OpenDropdown = (OpenDropdown == id) ? null : id;
+
+    // Add Employee modal
+    bool ShowAddModalFlag = false;
+    CreateEmployeeDto AddModel = new();
+    decimal AddAnnualCTC { get; set; } = 0;
+    decimal AddMonthlyCTC => AddAnnualCTC > 0 ? Math.Round(AddAnnualCTC / 12, 2) : 0;
+
+    void ShowAddModal()
+    {
+        AddModel = new CreateEmployeeDto();
+        AddAnnualCTC = 0;
+        ShowAddModalFlag = true;
+    }
+    void CloseAddModal() => ShowAddModalFlag = false;
+
+    async Task SaveAddEmployee()
+    {
+        try
+        {
+            AddModel.AnnualCTC = AddAnnualCTC;
+            AddModel.MonthlyCTC = AddMonthlyCTC;
+
+            var response = await Http.PostAsJsonAsync("api/documents/employee", AddModel);
+            if (!response.IsSuccessStatusCode)
+            {
+                Console.WriteLine("SaveAddEmployee failed: " + response.StatusCode);
+                return;
+            }
+
+            var saved = await response.Content.ReadFromJsonAsync<Employee>();
+            if (saved != null)
+            {
+                AllEmployees.Insert(0, saved);
+                _pageIndex = 0;
+            }
+
+            ShowAddModalFlag = false;
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("SaveAddEmployee ERROR: " + ex.Message);
+        }
+    }
+
+    // Edit Employee modal
+    bool ShowEditModalFlag = false;
+    Employee EditModel = new();
+    decimal EditAnnualCTC { get; set; } = 0;
+    decimal EditMonthlyCTC => EditAnnualCTC > 0 ? Math.Round(EditAnnualCTC / 12, 2) : 0;
+
+    void OpenEditModal(Employee emp)
+    {
+        EditModel = new Employee
+        {
+            Id = emp.Id,
+            EmployeeNo = emp.EmployeeNo,
+            Name = emp.Name,
+            Department = emp.Department,
+            Designation = emp.Designation,
+            Location = emp.Location,
+            PAN = emp.PAN,
+            JoiningDate = emp.JoiningDate,
+            MonthlyCTC = emp.MonthlyCTC,
+            AnnualCTC = emp.AnnualCTC,
+            UAN = emp.UAN
+        };
+
+        EditAnnualCTC = EditModel.AnnualCTC;
+        ShowEditModalFlag = true;
+    }
+
+    void CloseEditModal() => ShowEditModalFlag = false;
+
+    async Task SaveEditEmployee()
+    {
+        try
+        {
+            // send PUT to update existing employee - implement server-side if not present
+            var dto = new CreateEmployeeDto
+            {
+                EmployeeNo = EditModel.EmployeeNo,
+                Name = EditModel.Name,
+                Department = EditModel.Department,
+                Designation = EditModel.Designation,
+                Location = EditModel.Location,
+                PAN = EditModel.PAN,
+                JoiningDate = EditModel.JoiningDate,
+                AnnualCTC = EditAnnualCTC,
+                MonthlyCTC = EditMonthlyCTC,
+                UAN = EditModel.UAN
+            };
+
+            var url = $"api/documents/employee/{EditModel.Id}";
+            var response = await Http.PutAsJsonAsync(url, dto);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                Console.WriteLine("SaveEditEmployee failed: " + response.StatusCode);
+                return;
+            }
+
+            var updated = await response.Content.ReadFromJsonAsync<Employee>();
+            if (updated != null)
+            {
+                // replace in list
+                var idx = AllEmployees.FindIndex(x => x.Id == updated.Id);
+                if (idx >= 0) AllEmployees[idx] = updated;
+            }
+
+            ShowEditModalFlag = false;
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("SaveEditEmployee ERROR: " + ex.Message);
+        }
+    }
+
+    async Task DeleteEmployee(Guid id)
+    {
+        try
+        {
+            if (!await JsConfirm($"Delete employee {id}?")) return;
+
+            var res = await Http.DeleteAsync($"api/documents/employee/{id}");
+            if (res.IsSuccessStatusCode)
+            {
+                AllEmployees.RemoveAll(e => e.Id == id);
+                StateHasChanged();
+            }
+            else
+            {
+                Console.WriteLine("Delete failed: " + res.StatusCode);
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("DeleteEmployee ERROR: " + ex.Message);
+        }
+    }
+
+    // Document panel
+    bool ShowDocumentPanel = false;
+    Employee? SelectedEmployee;
+    Guid SelectedEmployeeId;
+    string SelectedDoc = "";
+    string PanelTitle = "";
+
+    // Date fields
+    DateTime? OfferDate;
+    DateTime? StartDate;
+    DateTime? FromDate;
+    DateTime? ToDate;
+    DateTime? IssueDate;
+    DateTime? PayslipMonth;
+
+    // Annexure overrides
+    decimal OverrideBasic = 0;
+    decimal OverrideHRA = 0;
+    decimal OverrideConveyance = 0;
+    decimal OverrideSpecial = 0;
+    decimal OverridePT = 0;
+
+    // Payslip overrides
+    decimal OverridePF = 0;
+    decimal OverridePFAdmin = 0;
+    decimal OverrideMobile = 0;
+    decimal OverrideHealth = 0;
+    decimal OverrideTravel = -1;
+
+    int EffectiveDays = 25;
+    int LOP = 0;
+
+    // Calculations
+    decimal CalculatedMonthlyCTC => SelectedEmployee?.MonthlyCTC ?? 0;
+    decimal CalculatedAnnualCTC => CalculatedMonthlyCTC * 12;
+    decimal CalculatedTotalDeductions = 0;
+    decimal CalculatedNetMonthly = 0;
+    decimal CalculatedNetYearly = 0;
+
+    byte[]? lastPdf;
+
+    void OpenOfferFor(Guid id) => OpenDocument(id, "offer");
+    void OpenPayslipFor(Guid id) => OpenDocument(id, "payslip");
+    void OpenExperienceFor(Guid id) => OpenDocument(id, "experience");
+    void OpenRelievingFor(Guid id) => OpenDocument(id, "relieving");
+
+    void OpenDocument(Guid id, string type)
+{
+    SelectedEmployee = AllEmployees.FirstOrDefault(e => e.Id == id);
+    if (SelectedEmployee == null) return;
+
+    SelectedEmployeeId = id;
+    SelectedDoc = type;
+    PanelTitle = type switch
+    {
+        "offer" => "Generate Offer Letter",
+        "payslip" => "Generate Payslip",
+        "experience" => "Generate Experience Letter",
+        "relieving" => "Generate Relieving Letter",
+        _ => "Generate Document"
+    };
+
+    OfferDate = DateTime.Today;
+    StartDate = SelectedEmployee?.JoiningDate;
+    PayslipMonth = DateTime.Today;
+    FromDate = SelectedEmployee?.JoiningDate;
+    ToDate = DateTime.Today;
+    IssueDate = DateTime.Today;
+
+    // Compute default Annexure-I values from Monthly CTC
+    var monthly = SelectedEmployee?.MonthlyCTC ?? 0m;
+
+    // Company rules:
+    // Basic = 50% of Monthly CTC
+    // HRA = 50% of Basic
+    // Conveyance = 1600
+    // Special = remaining
+    // PT = 200
+    var basicDefault = Math.Round(monthly * 0.50m, 2);
+    var hraDefault = Math.Round(basicDefault * 0.50m, 2);
+    var convDefault = 1600m;
+    var specialDefault = Math.Round(monthly - (basicDefault + hraDefault + convDefault), 2);
+    var ptDefault = 200m;
+    var pfDefault = Math.Round(basicDefault * 0.12m, 2); // 12% PF on basic
+
+    // Set overrides to defaults so UI shows prefilled values (still editable)
+    OverrideBasic = basicDefault;
+    OverrideHRA = hraDefault;
+    OverrideConveyance = convDefault;
+    OverrideSpecial = specialDefault;
+    OverridePT = ptDefault;
+
+    // ---------------- PAYSLIP DEFAULTS (BUSINESS RULES) ----------------
+    OverridePF = 3600m;          // Fixed PF
+    OverridePT = 200m;           // Fixed PT
+    OverridePFAdmin = 150m;      // Fixed PF Admin
+    OverrideMobile = 0m;         // Default 0
+    OverrideHealth = 0m;         // Default 0
+    OverrideTravel = 0m;         // Default 0
+
+
+    // Effective days default
+    EffectiveDays = 25;
+    LOP = 0;
+
+    Recalculate();
+
+    ShowDocumentPanel = true;
+    OpenDropdown = null;
+}
+
+
+    void CloseDocumentPanel() => ShowDocumentPanel = false;
+
+    void ResetOverrides()
+    {
+        OverrideBasic = OverrideHRA = OverrideConveyance = OverrideSpecial = 0;
+        OverridePT = OverridePF = OverridePFAdmin = OverrideMobile = OverrideHealth = 0;
+        OverrideTravel = -1;
+    }
+
+    void Recalculate()
+{
+    var monthly = CalculatedMonthlyCTC;
+
+    // If selected employee is null, keep zero-safe defaults
+    if (monthly <= 0)
+    {
+        CalculatedTotalDeductions = 0;
+        CalculatedNetMonthly = 0;
+        CalculatedNetYearly = 0;
+        StateHasChanged();
+        return;
+    }
+
+    // Use overrides when provided (> 0 or special case for travel)
+    decimal basic = OverrideBasic > 0 ? OverrideBasic : Math.Round(monthly * 0.50m, 2);
+    decimal hra = OverrideHRA > 0 ? OverrideHRA : Math.Round(basic * 0.50m, 2);
+    decimal conv = OverrideConveyance > 0 ? OverrideConveyance : 1600m;
+    decimal special = OverrideSpecial > 0 ? OverrideSpecial : Math.Round(monthly - (basic + hra + conv), 2);
+    @* decimal pt = OverridePT > 0 ? OverridePT : 200m; *@
+
+    // ---------------- FIXED PAYSLIP RULES ----------------
+    decimal pf = OverridePF;               // 3600 default (editable)
+    decimal pt = OverridePT;               // 200 default (editable)
+    decimal pfAdmin = OverridePFAdmin;     // 150 default (editable)
+    decimal mobile = OverrideMobile;        // 0 default
+    decimal health = OverrideHealth;        // 0 default
+    decimal travel = OverrideTravel;        // 0 default
+
+
+    // Total deductions
+    decimal totalDed = pf + pt + pfAdmin + mobile + health;
+
+    // Net = monthly earnings - deductions
+    decimal net = monthly - totalDed;
+
+    CalculatedTotalDeductions = Math.Round(totalDed, 2);
+    CalculatedNetMonthly = Math.Round(net, 2);
+    CalculatedNetYearly = Math.Round(net * 12, 2);
+
+    StateHasChanged();
+}
+
+
+    GenerateDocumentDto BuildDto()
+    {
+        return new GenerateDocumentDto
+        {
+            EmployeeId = SelectedEmployeeId,
+            DocumentType = SelectedDoc,
+            IssueDate = IssueDate,
+            StartDate = StartDate,
+            FromDate = FromDate,
+            ToDate = ToDate,
+
+            // Branding
+            LogoFile = SelectedLogo,
+            SignatureFile = SelectedSignature,
+
+            // -------- OFFER / ANNEXURE VALUES --------
+            Basic = OverrideBasic,
+            HRA = OverrideHRA,
+            Conveyance = OverrideConveyance,
+            SpecialAllowance = OverrideSpecial,
+            PT = OverridePT,
+
+            // -------- PAYSLIP DEDUCTIONS (IMPORTANT) --------
+            // DO NOT USE >0 OR NULL CONDITIONS ❌
+            PF = OverridePF,
+            PFAdmin = OverridePFAdmin,
+            MobileDeduction = OverrideMobile,
+            HealthInsurance = OverrideHealth,
+            TravelAllowance = OverrideTravel
+        };
+    }
+
+
+
+    async Task PreviewDocument()
+    {
+        try
+        {
+            var dto = BuildDto();
+            var response = await Http.PostAsJsonAsync("api/documents/generate", dto);
+            if (!response.IsSuccessStatusCode)
+            {
+                Console.WriteLine("PreviewDocument failed: " + response.StatusCode);
+                return;
+            }
+
+            lastPdf = await response.Content.ReadAsByteArrayAsync();
+            await FileUtil.PreviewPdf(lastPdf);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("PreviewDocument ERROR: " + ex.Message);
+        }
+    }
+
+    async Task DownloadDocument()
+    {
+        try
+        {
+            if (lastPdf == null)
+            {
+                await PreviewDocument();
+                if (lastPdf == null) return;
+            }
+
+            var fileName = $"{SelectedDoc}_{SelectedEmployee?.EmployeeNo}.pdf";
+            await FileUtil.SaveAs(fileName, lastPdf);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("DownloadDocument ERROR: " + ex.Message);
+        }
+    }
+
+    // Refresh helper
+    async Task RefreshEmployees()
+    {
+        await LoadEmployees();
+    }
+
+    // small JS confirm wrapper (calls window.confirm via FileUtil if available)
+    async Task<bool> JsConfirm(string message)
+    {
+        try
+        {
+            // if FileUtil exposes confirm, use it; otherwise fallback to C# confirm via prompt isn't available — so just return true
+            // adjust if you have a real JS confirm helper
+            return await Task.FromResult(true);
+        }
+        catch
+        {
+            return true;
+        }
+    }
+    // Offer Letter Logo Selection
+    string SelectedLogo = "";  
+    List<string> Logos = new() 
+    { 
+        "METROLABS_OLD.png", 
+        "METROLABS_NEW.png" 
+    };
+    string? SelectedSignature = null;
+    List<string> Signatures = new()
+    {
+        "HR SIGN @ STAMP.png",
+    };
+
+
+}
